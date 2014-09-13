@@ -5,14 +5,14 @@ A daemon for PiGlow.
 
 To install put Makefile and piglowd.c in a directory and type make. Then copy piglowd to whereever you want it. Copy piglowd.conf to /etc/piglowd and edit it to include the patterns you want.
 
-To run the daemon, just execute piglowd.
+To run the daemon, just execute piglowd. If you run it as a user, without sudo, you must do **gpio load i2c** first. 
 
 Currently only 9 patterns are supported.
 
 You define a pattern by a line in piglowd.conf. The line number is the pattern number.
 
-You can select a pattern by: echo n > /tmp/piglowfifo (where n is the pattern number 0-9).
-You can shut down the daemon by echo x >/tmp/piglowfifo.
+You can select a pattern by: **echo n > /tmp/piglowfifo** (where n is the pattern number 0-9).
+You can shut down the daemon by **echo x >/tmp/piglowfifo**.
 
 The pattern language is based on up to three nested for loops with subscripts i, j and k.
 
