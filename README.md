@@ -22,11 +22,11 @@ The pattern line consists of a set of tokens separated by spaces.
 
 The tokens are:
 
-  For loop: <index>=<start>-<end> where index is i,j or k and start or end are integers. Omitting n goes to infinity.
-  Ring identifier: r<index>=<intensity> or r<number>= intensity where index or i,j or k and intensity is 0-255
-  Leg identifier: l<index>=intensity or l<number>= intensity
-  LED identifier: r<index>l<index> where index is i,j or k, or can be a number.
-  Delay: d<milliseconds>
+- For loop: <index>=<start>-<end> where index is i,j or k and start or end are integers. Omitting n goes to infinity.
+- Ring identifier: r<index>=<intensity> or r<number>= intensity where index or i,j or k and intensity is 0-255
+- Leg identifier: l<index>=intensity or l<number>= intensity
+- LED identifier: r<index>l<index> where index is i,j or k, or can be a number.
+- Delay: d<milliseconds>
   
 Leg numbers are trucated modulo 3, and ring numbers odulo 6. This makes writing loops easier.
 
