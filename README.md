@@ -34,5 +34,5 @@ example:
 
 > i=0- j=0-5 rj=100 d100 rj=0 j=5-0 rj=100 d100 rj=0
 
-This means for i from 0 to infinity, for j from 0 to 5 set all LEDS in the selected ring to intesity 100, delay 100 milliseconds and switch the ring off, and then do the same for j from 5 to 0 counting down. This causes concentric rings to be lit going inwards and the outwards, forever.
+This means for i from 0 to infinity, for j from 0 to 5 set all LEDs in the selected ring to intesity 100, delay 100 milliseconds and switch the ring off, and then do the same for j from 5 to 0 counting down. This causes concentric rings to be lit going inwards and the outwards, forever.
 
