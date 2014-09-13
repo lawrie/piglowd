@@ -13,6 +13,8 @@
 #include <piGlow.h>
 
 #define MAX_INDEX 3
+#define TRUE 1
+#define FALSE 0
 
 #define OPCODE_FOR 0
 #define OPCODE_RING 1
@@ -31,11 +33,36 @@ struct instruction {
 #include <stdlib.h>
 #include <string.h>
 
+static int pattern = -1, fd, lt;
+
+static int open_fifo(void) 
+{
+  char fifo_name[] = "/tmp/piglowfifo";
+  struct stat st;
+
+  if (stat(fifo_name, &st) != 0)
+    mkfifo(fifo_name, 0666);
+
+  fd= open(fifo_name, O_RDONLY | O_NONBLOCK);
+
+  return fd;
+}
+
+static int read_fifo(void) {
+  char buf[1];
+
+  if (read(fd, &buf, sizeof(char)*1) > 0)
+  {
+    return buf[0] - '0';
+  }
+  else return -1;
+}
+
 static void become_daemon()
 {
     pid_t pid;
     int pidFilehandle;
-    char* pidfile = "/tmp/pilogd.pid";
+    char* pidfile = "/tmp/piglowd.pid";
     char str[10];
 
     /* Fork off the parent process */
@@ -108,7 +135,7 @@ static void become_daemon()
     write(pidFilehandle, str, strlen(str));
 }
 
-char** read_config(void)
+static char** read_config(void)
 {
   int lines_allocated = 5;
   int max_line_len = 200;
@@ -121,7 +148,7 @@ char** read_config(void)
     exit(1);
   }
 
-  FILE *fp = fopen("/etc/piglod/piglod.conf", "r");
+  FILE *fp = fopen("/etc/piglowd/piglowd.conf", "r");
   if (fp == NULL)
   {
     fprintf(stderr,"Error opening file.\n");
@@ -172,16 +199,16 @@ char** read_config(void)
   return words;
 }
 
-
-char** str_split(char* a_str, const char a_delim)
+static char** str_split(char* a_str, const char a_delim)
 {
     char** result    = 0;
     size_t count     = 0;
     char* tmp        = a_str;
-    char* last_comma = 0;
+    char* last_delim = 0;
     char delim[2];
     delim[0] = a_delim;
     delim[1] = 0;
+    char *save_ptr;
 
     /* Count how many elements will be extracted. */
     while (*tmp)
@@ -189,13 +216,13 @@ char** str_split(char* a_str, const char a_delim)
         if (a_delim == *tmp)
         {
             count++;
-            last_comma = tmp;
+            last_delim = tmp;
         }
         tmp++;
     }
 
     /* Add space for trailing token. */
-    count += last_comma < (a_str + strlen(a_str) - 1);
+    count += last_delim < (a_str + strlen(a_str) - 1);
 
     /* Add space for terminating null string so caller
        knows where the list of returned strings ends. */
@@ -206,13 +233,13 @@ char** str_split(char* a_str, const char a_delim)
     if (result)
     {
         size_t idx  = 0;
-        char* token = strtok(a_str, delim);
+        char* token = strtok_r(a_str, delim, &save_ptr);
 
         while (token)
         {
             assert(idx < count);
             *(result + idx++) = strdup(token);
-            token = strtok(0, delim);
+            token = strtok_r(0, delim, &save_ptr);
         }
         assert(idx == count - 1);
         *(result + idx) = 0;
@@ -221,10 +248,17 @@ char** str_split(char* a_str, const char a_delim)
     return result;
 }
 
-void execute(struct instruction *instructions, int level, int start, int end, int* index){
+static void clear(void) 
+{
+  int i;
+  // Switches all LEDS off
+  for(i=0;i<3;i++) piGlowLeg(i,0);
+}
+
+static int execute(struct instruction *instructions, int level, int start, int end, int* index){
   int i, j, e;
 
-  //printf("Executing from %d to %d at level %d with index = %d\n", start,end, level, index[level]);
+  //syslog(LOG_NOTICE,"Executing from %d to %d at level %d with index = %d\n", start,end, level, index[level]);
 
   for(i=start;i<end;i++)
   {
@@ -234,8 +268,10 @@ void execute(struct instruction *instructions, int level, int start, int end, in
     int p2 = inst.p2;
     int p3 = inst.p3;
 
-    //printf("Opcode is %d, p1 is %d, p2 is %d, p3 is %d\n", opcode, p1, p2, p3);
+    pattern = read_fifo();
+    if (pattern >= 0) return FALSE;
 
+    //syslog(LOG_NOTICE, "Opcode is %d, p1 is %d, p2 is %d, p3 is %d\n", opcode, p1, p2, p3);
     switch(opcode) 
     {
       case OPCODE_FOR:
@@ -244,7 +280,7 @@ void execute(struct instruction *instructions, int level, int start, int end, in
         for(j=p2;(p2 <= p3 ? j<=p3 : j>=p3);(p2 <= p3 ? j++ : j--)) 
         {
           index[p1] = j;
-          execute(instructions, p1,i+1, e, index);
+          if (!execute(instructions, p1,i+1, e, index)) return FALSE;
         }
         //printf("Setting i to %d\n", e-1);
         i = e-1;
@@ -263,125 +299,150 @@ void execute(struct instruction *instructions, int level, int start, int end, in
         break; 
     }
   }
+  return TRUE;
+}
+
+struct instruction * compile(char * pattern) 
+{
+  char* pattern_copy = strdup(pattern); 
+  char** tokens = str_split(pattern_copy,' ');
+  struct instruction * instructions = NULL;
+
+  if (tokens)
+  {
+    int i;
+    int ring, leg ;
+    char *token;
+    char **args;
+    char *left, *right;
+    char **params;
+    char * start, *end;
+    char *token_copy;
+
+    for(lt=0;*(tokens + lt);lt++);
+
+    instructions = (struct instruction *) malloc(sizeof(struct instruction) * lt);
+    for (i = 0; *(tokens + i); i++)
+    {
+      token = *(tokens + i);
+
+      token_copy = strdup(token);
+      args = str_split(token_copy,'=');
+      left = args[0];
+      right = args[1];
+
+      start = NULL;
+      end = NULL;
+
+      if (right != NULL) 
+      {
+        params = str_split(right,'-');
+        start = params[0];
+        end = params[1];
+      }
+	    
+      if (*token == 'l') 
+      {
+        leg = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
+	instructions[i].opcode = OPCODE_LEG;
+	instructions[i].p1 = leg;
+	instructions[i].p2 = atoi(right);
+      }
+      else if (*token == 'r')
+      {
+	ring = ((token[1] >= 'i'  && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
+	if(strlen(left) == 2)
+	{
+       	  instructions[i].opcode = OPCODE_RING;
+          instructions[i].p1 = ring;
+	  instructions[i].p2 = atoi(right);
+	}
+	else 
+        {
+	  leg = ((token[3] >= 'i' && token[3] <= 'k') ? (token[3] - 'h') * -1 : token[3] - '0');
+          instructions[i].opcode = OPCODE_LED;
+	  instructions[i].p1 = leg;
+	  instructions[i].p2 = ring;
+	  instructions[i].p3 = atoi(right);
+	}
+      } 
+      else if (*token >= 'i' && *token <= 'k')
+      {
+        instructions[i].opcode = OPCODE_FOR;
+        instructions[i].p1 = *token - 'i';
+        instructions[i].p2 = (start == NULL ? 0 : atoi(start));
+        instructions[i].p3 = (end == NULL ? 1000000 : atoi(end));
+      }
+      else if (*token == 'd')
+      {
+        instructions[i].opcode = OPCODE_DELAY;
+        instructions[i].p1 = atoi(&token[1]);
+      }
+      else 
+      {
+         printf("Invalid token: %s\n", token);
+      }
+      free(token_copy);
+    }
+    for(i=0;*(tokens +i);i++) free(tokens[i]);
+    free(tokens);
+    free(pattern_copy);
+  }
+  return instructions;
 }
 
 int main (int argc, char *argv[])
 {
-  int i;
-  int ring, leg ;
-  char **tokens;
-  char *token;
-  char **args;
-  char *left, *right;
-  char **params;
-  char * start, *end;
-  char **patterns;
-  
+  char** patterns;
+  struct instruction * instructions;
+  int index[MAX_INDEX];
+
   wiringPiSetupSys () ;
 
   piGlowSetup (1) ;
 
   patterns = read_config();
 
-  if (argc > 0) 
+  //printf("argc is %d\n", argc);
+
+  fd = open_fifo();
+
+  if (argc > 1) 
   {
-    printf("pattern:%s\n",patterns[atoi(argv[1])]);
-    tokens = str_split(patterns[atoi(argv[1])],' ');
-
-    if (tokens)
-    {
-        int index[MAX_INDEX];
-        int lt;
-        struct instruction * instructions;
-        char msg[80];
-
-        become_daemon();
-
-        sprintf(msg,"pilogd executing pattern %s\n", argv[1]);
-        syslog(LOG_NOTICE, msg);
-
-        for(lt=0;*(tokens + lt);lt++);
-        //printf("Length of tokens is %d\n", lt);
-
-        instructions = (struct instruction *) malloc(sizeof(struct instruction) * lt);
-        //printf("level = %d, index = %d\n", level, index[level]); 
-        for (i = 0; *(tokens + i); i++)
-        {
-          token = *(tokens + i);
-	  //printf("token %d = %s\n", i,  token);
-
-	  args = str_split(strdup(token),'=');
-	  left = args[0];
-	  right = args[1];
-
-	  //printf("token %d = %s\n", i,  token);
-
-	  start = NULL;
-	  end = NULL;
-
-	  if (right != NULL) 
-	  {
-	    params = str_split(right,'-');
-	    start = params[0];
-	    end = params[1];
-
-	    //printf("start = %s, end = %s\n", start, end);
-	  }
-
-	  //printf("left = %s, right = %s\n", left, right);
-	    
-	  if (*token == 'l') 
-	  {
-	    leg = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
-	    instructions[i].opcode = OPCODE_LEG;
-	    instructions[i].p1 = leg;
-	    instructions[i].p2 = atoi(right);
-	  }
-	  else if (*token == 'r')
-	  {
-	    //printf("Length is %d\n", strlen(left));
-	    ring = ((token[1] >= 'i'  && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
-	    if(strlen(left) == 2)
-	    {
-       	      instructions[i].opcode = OPCODE_RING;
-              instructions[i].p1 = ring;
-	      instructions[i].p2 = atoi(right);
-	    }
-	    else 
-            {
-	      leg = ((token[3] >= 'i' && token[3] <= 'k') ? (token[3] - 'h') * -1 : token[3] - '0');
-              instructions[i].opcode = OPCODE_LED;
-	      instructions[i].p1 = leg;
-	      instructions[i].p2 = ring;
-	      instructions[i].p3 = atoi(right);
-	    }
-	  } 
-	  else if (*token >= 'i' && *token <= 'k')
-	  {
-	    instructions[i].opcode = OPCODE_FOR;
-	    instructions[i].p1 = *token - 'i';
-	    instructions[i].p2 = (start == NULL ? 0 : atoi(start));
-	    instructions[i].p3 = (end == NULL ? 1000000 : atoi(end));
-	  }
-	  else if (*token == 'd')
-	  {
-	    instructions[i].opcode = OPCODE_DELAY;
-	    instructions[i].p1 = atoi(&token[1]);
-	  }
-	  else 
-          {
-            printf("Invalid token: %s\n", token);
-          }
-        }
-
-        execute(instructions,-1,0,lt,index);
-
-
-        syslog(LOG_NOTICE, "pilogd terminated.");
-        closelog();
-
-    }
+    pattern = atoi(argv[1]);
+    printf("pattern:%d\n",pattern);
   }
+        
+  become_daemon();
+  syslog(LOG_NOTICE, "Starting piglowd daemon");
+
+  for(;;)
+  { 
+    if (pattern < 0) pattern = read_fifo();
+
+    if (pattern  < 0) 
+    {
+      delay(500);
+      continue;
+    }
+
+    syslog(LOG_NOTICE, "Pattern is %d\n", pattern);
+
+    if (pattern == ('x' - '0')) break;
+
+    instructions = compile(patterns[pattern]);
+
+    syslog(LOG_NOTICE, "Executing pattern %d\n", pattern);
+    pattern = -1;
+    clear();
+    execute(instructions,-1,0,lt,index);
+    syslog(LOG_NOTICE, "Finishing pattern");
+    clear();
+    free(instructions);
+  }
+
+  syslog(LOG_NOTICE, "piglowd terminated.");
+  closelog();
   return 0;
 }
 
