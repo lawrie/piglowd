@@ -197,6 +197,8 @@ static char** read_config(void)
   for(j = 0; j < i; j++)
     printf("%d: %s\n", j, words[j]);
 
+  fclose(fp); 
+
   return words;
 }
 
@@ -435,7 +437,12 @@ int main (int argc, char *argv[])
       clear();
       pattern = -1;
       continue;
-    } 
+    } else if (pattern== ('r' - '0')) {
+      clear();
+      pattern = -1;
+      patterns = read_config();
+      continue;
+    }
 
     instructions = compile(patterns[pattern]);
 
