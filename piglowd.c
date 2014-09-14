@@ -289,16 +289,16 @@ static int execute(struct instruction *instructions, int level, int start, int e
         i = e-1;
         break; 
       case OPCODE_RING:
-        piGlowRing((p1 < 0 ? index[p1*-1 - 1] :p1) % 6, p2);
+        piGlowRing((p1 < 0 ? index[p1*-1 - 1] :p1) % 6,(p2 < 0 ? index[p2*-1 - 1] :p2));
         break;
       case OPCODE_LEG:
-        piGlowLeg((p1 < 0 ? index[p1*-1 -1] :p1) % 3, p2);
+        piGlowLeg((p1 < 0 ? index[p1*-1 -1] :p1) % 3, (p2 < 0 ? index[p2*-1 - 1] :p2));
         break;
       case OPCODE_LED:
-        piGlow1((p1 < 0 ? index[p1*-1 -1] :p1) % 3, (p2 < 0 ? index[p2*-1 -1] :p2) % 6, p3);
+        piGlow1((p1 < 0 ? index[p1*-1 -1] :p1) % 3, (p2 < 0 ? index[p2*-1 -1] :p2) % 6, (p3 < 0 ? index[p3*-1 - 1] :p3));
         break;
       case OPCODE_DELAY:
-        delay(p1);
+        delay((p1 < 0 ? index[p1*-1 - 1] :p1));
         break; 
     }
   }
@@ -352,7 +352,7 @@ struct instruction * compile(char * pattern)
         leg = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
 	instructions[i].opcode = OPCODE_LEG;
 	instructions[i].p1 = leg;
-	instructions[i].p2 = atoi(right);
+	instructions[i].p2 =  ((right[0] >= 'i'  && right[0] <= 'k') ? (right[0] - 'h') * -1 : atoi(right));
       }
       else if (*token == 'r')
       {
@@ -361,7 +361,7 @@ struct instruction * compile(char * pattern)
 	{
        	  instructions[i].opcode = OPCODE_RING;
           instructions[i].p1 = ring;
-	  instructions[i].p2 = atoi(right);
+	  instructions[i].p2 = ((right[0] >= 'i'  && right[0] <= 'k') ? (right[0] - 'h') * -1 : atoi(right));
 	}
 	else 
         {
@@ -369,7 +369,7 @@ struct instruction * compile(char * pattern)
           instructions[i].opcode = OPCODE_LED;
 	  instructions[i].p1 = leg;
 	  instructions[i].p2 = ring;
-	  instructions[i].p3 = atoi(right);
+	  instructions[i].p3 = ((right[0] >= 'i'  && right[0] <= 'k') ? (right[0] - 'h') * -1 : atoi(right));
 	}
       } 
       else if (*token >= 'i' && *token <= 'k')
@@ -383,7 +383,7 @@ struct instruction * compile(char * pattern)
       else if (*token == 'd')
       {
         instructions[i].opcode = OPCODE_DELAY;
-        instructions[i].p1 = atoi(&token[1]);
+        instructions[i].p1 = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : atoi(&token[1]));
       }
       else 
       {
