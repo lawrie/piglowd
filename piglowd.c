@@ -27,6 +27,7 @@ struct instruction {
   int p1;
   int p2;
   int p3;
+  int p4;
 };
 
 #include <stdio.h>
@@ -190,11 +191,11 @@ static char** read_config(void)
     words[i][j+1]='\0';
   }
 
-  printf("There are %d patterns\n", i);
+  printf("There are %d patterns:\n", i);
 
   int j;
   for(j = 0; j < i; j++)
-    printf("%s\n", words[j]);
+    printf("%d: %s\n", j, words[j]);
 
   return words;
 }
@@ -244,7 +245,6 @@ static char** str_split(char* a_str, const char a_delim)
         assert(idx == count - 1);
         *(result + idx) = 0;
     }
-
     return result;
 }
 
@@ -267,6 +267,7 @@ static int execute(struct instruction *instructions, int level, int start, int e
     int p1 = inst.p1;
     int p2 = inst.p2;
     int p3 = inst.p3;
+    int p4 = inst.p4;
 
     pattern = read_fifo();
     if (pattern >= 0) return FALSE;
@@ -276,11 +277,11 @@ static int execute(struct instruction *instructions, int level, int start, int e
     {
       case OPCODE_FOR:
         for(e=i+1;e<end && (instructions[e].opcode != OPCODE_FOR || instructions[e].p1 > p1);e++);
-        //printf("Skipping to %d\n", e);
-        for(j=p2;(p2 <= p3 ? j<=p3 : j>=p3);(p2 <= p3 ? j++ : j--)) 
+        for(j=p2;(p2 <= p3 ? j<=p3 : j>=p3);) 
         {
           index[p1] = j;
           if (!execute(instructions, p1,i+1, e, index)) return FALSE;
+          if (p2 <= p3) j += p4; else j-= p4;
         }
         //printf("Setting i to %d\n", e-1);
         i = e-1;
@@ -315,8 +316,7 @@ struct instruction * compile(char * pattern)
     char *token;
     char **args;
     char *left, *right;
-    char **params;
-    char * start, *end;
+    char * start, *end, *increment;
     char *token_copy;
 
     for(lt=0;*(tokens + lt);lt++);
@@ -333,12 +333,16 @@ struct instruction * compile(char * pattern)
 
       start = NULL;
       end = NULL;
+      increment = NULL;
 
       if (right != NULL) 
       {
-        params = str_split(right,'-');
-        start = params[0];
-        end = params[1];
+        args = str_split(right,',');
+        right = args[0];
+        increment = args[1];
+        args = str_split(right,'-');
+        start=args[0];
+        end = args[1];
       }
 	    
       if (*token == 'l') 
@@ -372,6 +376,7 @@ struct instruction * compile(char * pattern)
         instructions[i].p1 = *token - 'i';
         instructions[i].p2 = (start == NULL ? 0 : atoi(start));
         instructions[i].p3 = (end == NULL ? 1000000 : atoi(end));
+        instructions[i].p4 = (increment == NULL ? 1 : atoi(increment));
       }
       else if (*token == 'd')
       {
@@ -403,8 +408,6 @@ int main (int argc, char *argv[])
 
   patterns = read_config();
 
-  //printf("argc is %d\n", argc);
-
   fd = open_fifo();
 
   if (argc > 1) 
@@ -426,9 +429,13 @@ int main (int argc, char *argv[])
       continue;
     }
 
-    syslog(LOG_NOTICE, "Pattern is %d\n", pattern);
-
     if (pattern == ('x' - '0')) break;
+    else if (pattern == ('c' - '0'))
+    {
+      clear();
+      pattern = -1;
+      continue;
+    } 
 
     instructions = compile(patterns[pattern]);
 
@@ -441,6 +448,7 @@ int main (int argc, char *argv[])
     free(instructions);
   }
 
+  clear();
   syslog(LOG_NOTICE, "piglowd terminated.");
   closelog();
   return 0;
