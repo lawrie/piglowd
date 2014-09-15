@@ -24,6 +24,7 @@
 #define OPCODE_LED 3
 #define OPCODE_DELAY 4
 #define OPCODE_RANDOM 5
+#define OPCODE_ASSIGN 6
 
 struct instruction {
   unsigned char opcode;
@@ -324,6 +325,9 @@ static int execute(struct instruction *instructions, int level, int start, int e
       case OPCODE_RANDOM:
         index[p1] = p2 + rand() % (p3 + 1 - p2);
         break;
+      case OPCODE_ASSIGN:
+        index[p1] = (p2 < 0 ? index[p2*-1 -1] :p2) - (p3 < 0 ? index[p3*-1 -1] :p3);
+        break;
     }
   }
   return TRUE;
@@ -353,7 +357,7 @@ struct instruction * compile(char * pattern)
       token = *(tokens + i);
 
       token_copy = strdup(token);
-      args = str_split(token_copy,(token[1] == '?' ? '?' : '='));
+      args = str_split(token_copy,(token[1] == '?' ? '?' : (token[1] == ':' ? ':' : '=')));
       left = args[0];
       right = args[1];
 
@@ -449,6 +453,13 @@ struct instruction * compile(char * pattern)
           instructions[i].p1 =  *token - 'i';
           instructions[i].p2 = atoi(start);
           instructions[i].p3 = atoi(end);
+        } 
+        else if (token[1] == ':')
+        {
+          instructions[i].opcode = OPCODE_ASSIGN;
+          instructions[i].p1 =  *token - 'i';
+          instructions[i].p2 = ((start[0] >= 'i'  && start[0] <= 'k') ? (start[0] - 'h') * -1 : atoi(start));
+          instructions[i].p3 = ((end[0] >= 'i'  && end[0] <= 'k') ? (end[0] - 'h') * -1 : atoi(end));
         } 
         else
         {
