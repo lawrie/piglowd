@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <syslog.h>
 #include <fcntl.h>
+#include <ctype.h>
 
 #include <wiringPi.h>
 #include <piGlow.h>
@@ -34,8 +35,19 @@ struct instruction {
 #include <stdlib.h>
 #include <string.h>
 
-static int pattern = -1, fd, lt;
+static int pattern = -1, fd, lt, is_daemon = FALSE;
 
+static int is_numeric(char *str)
+{
+  while(*str)
+  {
+    if(!isdigit(*str))
+      return 0;
+    str++;
+  }
+
+  return 1;
+}
 static int open_fifo(void) 
 {
   char fifo_name[] = "/tmp/piglowfifo";
@@ -134,6 +146,14 @@ static void become_daemon()
  
     /* write pid to lockfile */
     write(pidFilehandle, str, strlen(str));
+
+    is_daemon = TRUE;
+}
+
+static void error(char *msg, char* token)
+{
+  if (is_daemon) syslog(LOG_NOTICE, msg, token);
+  else printf(msg, token);
 }
 
 static char** read_config(void)
@@ -285,7 +305,6 @@ static int execute(struct instruction *instructions, int level, int start, int e
           if (!execute(instructions, p1,i+1, e, index)) return FALSE;
           if (p2 <= p3) j += p4; else j-= p4;
         }
-        //printf("Setting i to %d\n", e-1);
         i = e-1;
         break; 
       case OPCODE_RING:
@@ -349,31 +368,97 @@ struct instruction * compile(char * pattern)
 	    
       if (*token == 'l') 
       {
+        if (strlen(token) < 4 || token[2] != '=') 
+        {
+          error("Invalid leg token: %s\n",token);
+          return NULL;
+        }
         leg = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
+        if (leg < -3 || leg > 2) 
+        {
+          error("Invalid leg value: %s\n",token);
+          return NULL;
+        }
 	instructions[i].opcode = OPCODE_LEG;
 	instructions[i].p1 = leg;
 	instructions[i].p2 =  ((right[0] >= 'i'  && right[0] <= 'k') ? (right[0] - 'h') * -1 : atoi(right));
+        if (instructions[i].p2 < -3 || instructions[i].p2 > 255) 
+        {
+          error("Invalid intensity value: %s\n",token);
+          return NULL;
+        }
       }
       else if (*token == 'r')
       {
+        if (strlen(token) < 4 || (token[2] != '=' && token[2] != 'l')) 
+        {
+          error("Invalid ring token: %s\n",token);
+          return NULL;
+        }
 	ring = ((token[1] >= 'i'  && token[1] <= 'k') ? (token[1] - 'h') * -1 : token[1] - '0');
+        if (ring < -3 || ring > 5) 
+        {
+          error("Invalid ring value: %s\n", token);
+          return NULL;
+        }
 	if(strlen(left) == 2)
 	{
        	  instructions[i].opcode = OPCODE_RING;
           instructions[i].p1 = ring;
 	  instructions[i].p2 = ((right[0] >= 'i'  && right[0] <= 'k') ? (right[0] - 'h') * -1 : atoi(right));
+          if (instructions[i].p2 < -3 || instructions[i].p2 > 255) 
+          {
+            error("Invalid intensity value: %s\n", token);
+            return NULL;
+          }
 	}
-	else 
+	else if (strlen(left) == 4)
         {
 	  leg = ((token[3] >= 'i' && token[3] <= 'k') ? (token[3] - 'h') * -1 : token[3] - '0');
+          if (leg < -3 || leg > 2) 
+          {
+            error("Invalid leg value: %s\n", token);
+            return NULL;
+          }
           instructions[i].opcode = OPCODE_LED;
 	  instructions[i].p1 = leg;
 	  instructions[i].p2 = ring;
 	  instructions[i].p3 = ((right[0] >= 'i'  && right[0] <= 'k') ? (right[0] - 'h') * -1 : atoi(right));
+          if (instructions[i].p3 < -3 || instructions[i].p3 > 255) 
+          {
+            error("Invalid intensity value: %s\n", token);
+            return NULL;
+          }
 	}
+        else 
+        {
+          error("Invalid ring token (left length): %s\n", token);
+          return NULL;
+        }
       } 
       else if (*token >= 'i' && *token <= 'k')
       {
+        if (token[1] != '=') 
+        {
+          error("Invalid loop token: %s\n", token);
+          return NULL;
+        }
+        if (start != NULL && !is_numeric(start)) 
+        {
+          error("Invalid start loop value: %s\n", token);
+          return NULL;
+        }
+        
+        if (end != NULL && !is_numeric(end)) 
+        {
+          error("Invalid end loop value: %s\n", token);
+          return NULL;
+        }
+        if (increment != NULL && !is_numeric(increment)) 
+        {
+          error("Invalid increment loop value: %s\n", token);
+          return NULL;
+        }
         instructions[i].opcode = OPCODE_FOR;
         instructions[i].p1 = *token - 'i';
         instructions[i].p2 = (start == NULL ? 0 : atoi(start));
@@ -382,12 +467,18 @@ struct instruction * compile(char * pattern)
       }
       else if (*token == 'd')
       {
+        if (!is_numeric(&token[1]) && (strlen(token) > 2 || token[1] < 'i' || token[1] > 'k')) 
+        {
+          error("Invalid delay token: %s\n", token);
+          return NULL;
+        }
         instructions[i].opcode = OPCODE_DELAY;
         instructions[i].p1 = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : atoi(&token[1]));
       }
       else 
       {
-         printf("Invalid token: %s\n", token);
+         error("Invalid token: %s\n", token);
+         return NULL;
       }
       free(token_copy);
     }
@@ -445,6 +536,7 @@ int main (int argc, char *argv[])
     }
 
     instructions = compile(patterns[pattern]);
+    if (instructions == NULL) continue;
 
     syslog(LOG_NOTICE, "Executing pattern %d\n", pattern);
     pattern = -1;
