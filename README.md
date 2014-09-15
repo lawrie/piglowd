@@ -16,7 +16,7 @@ You can shut down the daemon by **echo x >/tmp/piglowfifo**.
 
 The pattern language is based on up to three nested for loops with subscripts i, j and k.
 
-LEDs are numbered by ring and leg number, the same as for winingPi. Leg numbers are 0-2 and ring numbers are 0-5 counting from the outside in.
+LEDs are numbered by ring and leg number, the same as for wiringPi. Leg numbers are 0-2 and ring numbers are 0-5 counting from the outside in.
 
 The pattern line consists of a set of tokens separated by spaces.
 
