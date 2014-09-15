@@ -536,7 +536,11 @@ int main (int argc, char *argv[])
     }
 
     instructions = compile(patterns[pattern]);
-    if (instructions == NULL) continue;
+    if (instructions == NULL)
+    {
+      pattern = -1;
+      continue;
+    }
 
     syslog(LOG_NOTICE, "Executing pattern %d\n", pattern);
     pattern = -1;
