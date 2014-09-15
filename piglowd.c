@@ -9,6 +9,7 @@
 #include <syslog.h>
 #include <fcntl.h>
 #include <ctype.h>
+#include <time.h>
 
 #include <wiringPi.h>
 #include <piGlow.h>
@@ -22,6 +23,7 @@
 #define OPCODE_LEG 2
 #define OPCODE_LED 3
 #define OPCODE_DELAY 4
+#define OPCODE_RANDOM 5
 
 struct instruction {
   unsigned char opcode;
@@ -319,6 +321,9 @@ static int execute(struct instruction *instructions, int level, int start, int e
       case OPCODE_DELAY:
         delay((p1 < 0 ? index[p1*-1 - 1] :p1));
         break; 
+      case OPCODE_RANDOM:
+        index[p1] = p2 + rand() % (p3 + 1 - p2);
+        break;
     }
   }
   return TRUE;
@@ -348,7 +353,7 @@ struct instruction * compile(char * pattern)
       token = *(tokens + i);
 
       token_copy = strdup(token);
-      args = str_split(token_copy,'=');
+      args = str_split(token_copy,(token[1] == '?' ? '?' : '='));
       left = args[0];
       right = args[1];
 
@@ -438,32 +443,42 @@ struct instruction * compile(char * pattern)
       } 
       else if (*token >= 'i' && *token <= 'k')
       {
-        if (token[1] != '=') 
+        if (token[1] == '?')
         {
-          error("Invalid loop token: %s\n", token);
-          return NULL;
-        }
-        if (start != NULL && !is_numeric(start)) 
+          instructions[i].opcode = OPCODE_RANDOM;
+          instructions[i].p1 =  *token - 'i';
+          instructions[i].p2 = atoi(start);
+          instructions[i].p3 = atoi(end);
+        } 
+        else
         {
-          error("Invalid start loop value: %s\n", token);
-          return NULL;
-        }
+          if (token[1] != '=') 
+          {
+            error("Invalid loop token: %s\n", token);
+            return NULL;
+          }
+          if (start != NULL && !is_numeric(start)) 
+          {
+            error("Invalid start loop value: %s\n", token);
+            return NULL;
+          }
         
-        if (end != NULL && !is_numeric(end)) 
-        {
-          error("Invalid end loop value: %s\n", token);
-          return NULL;
+          if (end != NULL && !is_numeric(end)) 
+          {
+            error("Invalid end loop value: %s\n", token);
+            return NULL;
+          }
+          if (increment != NULL && !is_numeric(increment)) 
+          {
+            error("Invalid increment loop value: %s\n", token);
+            return NULL;
+          }
+          instructions[i].opcode = OPCODE_FOR;
+          instructions[i].p1 = *token - 'i';
+          instructions[i].p2 = (start == NULL ? 0 : atoi(start));
+          instructions[i].p3 = (end == NULL ? 1000000 : atoi(end));
+          instructions[i].p4 = (increment == NULL ? 1 : atoi(increment));
         }
-        if (increment != NULL && !is_numeric(increment)) 
-        {
-          error("Invalid increment loop value: %s\n", token);
-          return NULL;
-        }
-        instructions[i].opcode = OPCODE_FOR;
-        instructions[i].p1 = *token - 'i';
-        instructions[i].p2 = (start == NULL ? 0 : atoi(start));
-        instructions[i].p3 = (end == NULL ? 1000000 : atoi(end));
-        instructions[i].p4 = (increment == NULL ? 1 : atoi(increment));
       }
       else if (*token == 'd')
       {
@@ -494,6 +509,8 @@ int main (int argc, char *argv[])
   char** patterns;
   struct instruction * instructions;
   int index[MAX_INDEX];
+
+  srand((unsigned int) time(NULL));
 
   wiringPiSetupSys () ;
 
