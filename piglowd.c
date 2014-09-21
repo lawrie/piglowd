@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <ctype.h>
 #include <time.h>
+#include <stdarg.h>
 
 #include <wiringPi.h>
 #include <piGlow.h>
@@ -38,7 +39,7 @@ struct instruction {
 #include <stdlib.h>
 #include <string.h>
 
-static int pattern = -1, fd, lt, np=0, is_daemon = FALSE, verbose=FALSE;
+static int pattern = -1, fd, lt, np=0, is_daemon = FALSE, verbose=FALSE, stepping=FALSE;
 
 static int is_numeric(char *str)
 {
@@ -55,6 +56,10 @@ static int open_fifo(void)
 {
   char fifo_name[] = "/tmp/piglowfifo";
   struct stat st;
+
+  // If created as a normal file, delete it
+  if (stat(fifo_name, &st) == 0 && !S_ISFIFO(st.st_mode)) 
+    remove(fifo_name);
 
   if (stat(fifo_name, &st) != 0)
     mkfifo(fifo_name, 0666);
@@ -75,6 +80,34 @@ static int read_fifo(void) {
     else return buf[0];
   }
   else return -1;
+}
+
+static void error(char *msg, ...)
+{
+  char str[100];
+  va_list args;
+  va_start( args, msg );
+
+  vsprintf( str, msg, args );
+
+  va_end( args );
+
+  if (is_daemon) syslog(LOG_NOTICE, str);
+  else printf(str);
+}
+
+static void log_msg(char *msg, ...)
+{ 
+  char str[100];
+  va_list args;
+  va_start( args, msg );
+
+  vsprintf( str, msg, args );
+
+  va_end( args );
+
+  if (is_daemon) syslog(LOG_NOTICE, str);
+  else printf(str);
 }
 
 static void become_daemon()
@@ -136,14 +169,14 @@ static void become_daemon()
     if (pidFilehandle == -1 )
     {
       /* Couldn't open lock file */
-      syslog(LOG_INFO, "Could not open PID lock file %s, exiting", pidfile);
+      log_msg("Could not open PID lock file %s, exiting", pidfile);
       exit(EXIT_FAILURE);
     }
     /* Try to lock file */
     if (lockf(pidFilehandle,F_TLOCK,0) == -1)
     {
       /* Couldn't get lock on lock file */
-      syslog(LOG_INFO, "Could not lock PID lock file %s, exiting", pidfile);
+      log_msg("Could not lock PID lock file %s, exiting", pidfile);
       exit(EXIT_FAILURE);
     }
  
@@ -154,12 +187,6 @@ static void become_daemon()
     write(pidFilehandle, str, strlen(str));
 
     is_daemon = TRUE;
-}
-
-static void error(char *msg, char* token)
-{
-  if (is_daemon) syslog(LOG_NOTICE, msg, token);
-  else printf(msg, token);
 }
 
 static char** read_config(void)
@@ -296,7 +323,7 @@ static void clear(void)
 static int execute(struct instruction *instructions, int level, int start, int end, int* index){
   int i, j, e;
 
-  //syslog(LOG_NOTICE,"Executing from %d to %d at level %d with index = %d\n", start,end, level, index[level]);
+  //log_msg("Executing from %d to %d at level %d with index = %d\n", start,end, level, index[level]);
 
   for(i=start;i<end;i++)
   {
@@ -308,7 +335,20 @@ static int execute(struct instruction *instructions, int level, int start, int e
     int p4 = inst.p4;
 
     pattern = read_fifo();
-    if (pattern >= 0) return FALSE;
+    if (stepping) 
+    {
+      if (pattern == 'g') 
+      {
+        stepping = FALSE;
+      } 
+      else if (pattern < 0) {
+       i--;
+       continue;
+      }
+      else if (pattern != 'n') return FALSE;
+      log_msg("Stepping mode, command = %c\n",pattern);
+    }
+    else if (pattern >= 0) return FALSE;
 
     switch(opcode) 
     {
@@ -550,6 +590,7 @@ int main (int argc, char *argv[])
   struct instruction * instructions;
   int index[MAX_INDEX];
   int i;
+  int make_daemon = TRUE;
 
   index[0] = 0;
 
@@ -559,6 +600,11 @@ int main (int argc, char *argv[])
     if (strcmp(argv[i], "-v") == 0) 
     {
       verbose = TRUE;
+    }
+     else if (strcmp(argv[i], "-p") == 0) 
+    {
+      make_daemon = FALSE;
+      pattern = atoi(argv[++i]);
     }
   }
 
@@ -572,8 +618,11 @@ int main (int argc, char *argv[])
 
   fd = open_fifo();
 
-  become_daemon();
-  syslog(LOG_NOTICE, "Starting piglowd daemon");
+  if (make_daemon)
+  {
+    become_daemon();
+    log_msg("Starting piglowd daemon");
+  }
 
   for(;;)
   { 
@@ -596,10 +645,14 @@ int main (int argc, char *argv[])
       pattern = -1;
       patterns = read_config();
       continue;
+    } else if (pattern == 's') {
+      stepping = TRUE;
+      pattern = -1;
+      continue;
     }
 
     if (pattern >= np) {
-      syslog(LOG_NOTICE, "Invalid pattern number: %d\n", pattern);
+      log_msg("Invalid pattern number: %d\n", pattern);
       pattern = -1;
       continue;
     }
@@ -611,20 +664,24 @@ int main (int argc, char *argv[])
       continue;
     }
 
-    syslog(LOG_NOTICE, "Executing pattern %d : %s\n", pattern, patterns[pattern]);
+    log_msg("Executing pattern %d : %s\n", pattern, patterns[pattern]);
     pattern = -1;
     clear();
     execute(instructions,0,0,lt,index);
-    syslog(LOG_NOTICE, "Finishing pattern");
+    log_msg("Finished pattern\n");
     clear();
     free(instructions);
+    if (!is_daemon) break;
   }
 
   clear();
   close(fd);
   remove("/tmp/piglowfifo");
-  syslog(LOG_NOTICE, "piglowd terminated.");
-  closelog();
+  if (is_daemon) 
+  {
+    log_msg("piglowd terminated.\n");
+    closelog();
+  } 
   return 0;
 }
 
