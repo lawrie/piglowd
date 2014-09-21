@@ -40,6 +40,7 @@ struct instruction {
 #include <string.h>
 
 static int pattern = -1, fd, lt, np=0, is_daemon = FALSE, verbose=FALSE, stepping=FALSE;
+static char**tokens;
 
 static int is_numeric(char *str)
 {
@@ -346,7 +347,7 @@ static int execute(struct instruction *instructions, int level, int start, int e
        continue;
       }
       else if (pattern != 'n') return FALSE;
-      log_msg("Stepping mode, command = %c\n",pattern);
+      log_msg("Stepping mode, command = %c, token=%s, i=%d, j=%d, k=%d\n",pattern, tokens[i], index[0], (level > 0 ? index[1] : 0), (level > 1 ? index[2] : 0));
     }
     else if (pattern >= 0) return FALSE;
 
@@ -388,7 +389,7 @@ static int execute(struct instruction *instructions, int level, int start, int e
 struct instruction * compile(char * pattern) 
 {
   char* pattern_copy = strdup(pattern); 
-  char** tokens = str_split(pattern_copy,' ');
+  tokens = str_split(pattern_copy,' ');
   struct instruction * instructions = NULL;
   int level=0;
 
@@ -575,8 +576,6 @@ struct instruction * compile(char * pattern)
       }
       free(token_copy);
     }
-    for(i=0;*(tokens +i);i++) free(tokens[i]);
-    free(tokens);
     free(pattern_copy);
     fprintf(fp,"}\n");
     fclose(fp);
@@ -671,6 +670,8 @@ int main (int argc, char *argv[])
     log_msg("Finished pattern\n");
     clear();
     free(instructions);
+    for(i=0;*(tokens +i);i++) free(tokens[i]);
+    free(tokens);
     if (!is_daemon) break;
   }
 
