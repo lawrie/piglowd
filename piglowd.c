@@ -556,7 +556,7 @@ int main (int argc, char *argv[])
   // Process args
   for (i = 1; i < argc; i++)  /* Skip argv[0] (program name). */
   {
-    if (strcmp(argv[i], "-q") == 0) 
+    if (strcmp(argv[i], "-v") == 0) 
     {
       verbose = TRUE;
     }
@@ -572,12 +572,6 @@ int main (int argc, char *argv[])
 
   fd = open_fifo();
 
-  if (argc > 1) 
-  {
-    pattern = atoi(argv[1]);
-    printf("pattern:%d\n",pattern);
-  }
-        
   become_daemon();
   syslog(LOG_NOTICE, "Starting piglowd daemon");
 
