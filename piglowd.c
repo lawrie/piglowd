@@ -38,7 +38,7 @@ struct instruction {
 #include <stdlib.h>
 #include <string.h>
 
-static int pattern = -1, fd, lt, is_daemon = FALSE;
+static int pattern = -1, fd, lt, np=0, is_daemon = FALSE, verbose=FALSE;
 
 static int is_numeric(char *str)
 {
@@ -67,9 +67,12 @@ static int open_fifo(void)
 static int read_fifo(void) {
   char buf[1];
 
-  if (read(fd, &buf, sizeof(char)*1) > 0)
+  if (read(fd, &buf, 1) > 0)
   {
-    return buf[0] - '0';
+    if (buf[0] < 32) return -1;
+    if (buf[0] >= '0' && buf[0] <= '9') return buf[0] - '0';
+    else if (buf[0] >= 'a' && buf[0] <= 'f') return (buf[0] - 'a' + 10);
+    else return buf[0];
   }
   else return -1;
 }
@@ -183,6 +186,7 @@ static char** read_config(void)
   for (i=0;1;i++)
   {
     int j;
+    char *r = NULL;
 
     /* Have we gone over our line allocation? */
     if (i >= lines_allocated)
@@ -206,22 +210,31 @@ static char** read_config(void)
       fprintf(stderr,"Out of memory (3).\n");
       exit(4);
     }
-    if (fgets(words[i],max_line_len-1,fp)==NULL)
-      break;
+    for(;;) 
+    {
+      r = fgets(words[i],max_line_len-1,fp);
+      if (r == NULL) break;
+      // Ignore comments
+      if (r[0] != '#') break;
+    }
+    if (r == NULL) break;
 
     /* Get rid of CR or LF at end of line */
     for (j=strlen(words[i])-1;j>=0 && (words[i][j]=='\n' || words[i][j]=='\r');j    --);
     words[i][j+1]='\0';
   }
 
-  printf("There are %d patterns:\n", i);
+  if (verbose && !is_daemon) 
+  {
+    printf("There are %d patterns:\n", i);
 
-  int j;
-  for(j = 0; j < i; j++)
-    printf("%d: %s\n", j, words[j]);
+    int j;
+    for(j = 0; j < i; j++)
+      printf("%d: %s\n", j, words[j]);
+  }
 
   fclose(fp); 
-
+  np = i;
   return words;
 }
 
@@ -297,7 +310,6 @@ static int execute(struct instruction *instructions, int level, int start, int e
     pattern = read_fifo();
     if (pattern >= 0) return FALSE;
 
-    //syslog(LOG_NOTICE, "Opcode is %d, p1 is %d, p2 is %d, p3 is %d\n", opcode, p1, p2, p3);
     switch(opcode) 
     {
       case OPCODE_FOR:
@@ -338,6 +350,7 @@ struct instruction * compile(char * pattern)
   char* pattern_copy = strdup(pattern); 
   char** tokens = str_split(pattern_copy,' ');
   struct instruction * instructions = NULL;
+  int level=0;
 
   if (tokens)
   {
@@ -348,6 +361,14 @@ struct instruction * compile(char * pattern)
     char *left, *right;
     char * start, *end, *increment;
     char *token_copy;
+    char indent[5];
+
+    FILE *fp = fopen("/tmp/pattern.c", "w");
+    fprintf(fp,"#include <wiringPi.h\n");
+    fprintf(fp,"#include <piGlow.h\n");
+    fprintf(fp, "\nint main(void)\n{\n  int i,j,k;\n\n  wiringPiSetupSys();\n  piGlowSetup(1);\n\n");
+
+    strcpy(indent,(level == 0 ? "" : (level == 1 ? "  " : "    "))); 
 
     for(lt=0;*(tokens + lt);lt++);
 
@@ -420,6 +441,8 @@ struct instruction * compile(char * pattern)
             error("Invalid intensity value: %s\n", token);
             return NULL;
           }
+          if (ring < 0) fprintf(fp, "%s  PiGlowRing(%c %c 6,%d)\n", indent, token[1], '%',instructions[i].p2);
+          else fprintf(fp,"    piGlowRing(%d,%d)\n", ring, instructions[i].p2);
 	}
 	else if (strlen(left) == 4)
         {
@@ -489,6 +512,9 @@ struct instruction * compile(char * pattern)
           instructions[i].p2 = (start == NULL ? 0 : atoi(start));
           instructions[i].p3 = (end == NULL ? 1000000 : atoi(end));
           instructions[i].p4 = (increment == NULL ? 1 : atoi(increment));
+          level = *token - 'i';
+          fprintf(fp,"%s  for(%c=%d;%c<=%d;i++)\n",indent,*token,instructions[i].p2,*token,instructions[i].p3);
+          fprintf(fp,"%s  {\n",indent);
         }
       }
       else if (*token == 'd')
@@ -500,6 +526,7 @@ struct instruction * compile(char * pattern)
         }
         instructions[i].opcode = OPCODE_DELAY;
         instructions[i].p1 = ((token[1] >= 'i' && token[1] <= 'k') ? (token[1] - 'h') * -1 : atoi(&token[1]));
+        fprintf(fp,"%s    delay(%d)\n", indent, instructions[i].p1);
       }
       else 
       {
@@ -511,6 +538,8 @@ struct instruction * compile(char * pattern)
     for(i=0;*(tokens +i);i++) free(tokens[i]);
     free(tokens);
     free(pattern_copy);
+    fprintf(fp,"}\n");
+    fclose(fp);
   }
   return instructions;
 }
@@ -520,6 +549,18 @@ int main (int argc, char *argv[])
   char** patterns;
   struct instruction * instructions;
   int index[MAX_INDEX];
+  int i;
+
+  index[0] = 0;
+
+  // Process args
+  for (i = 1; i < argc; i++)  /* Skip argv[0] (program name). */
+  {
+    if (strcmp(argv[i], "-q") == 0) 
+    {
+      verbose = TRUE;
+    }
+  }
 
   srand((unsigned int) time(NULL));
 
@@ -550,16 +591,22 @@ int main (int argc, char *argv[])
       continue;
     }
 
-    if (pattern == ('x' - '0')) break;
-    else if (pattern == ('c' - '0'))
+    if (pattern == 'x') break;
+    else if (pattern == 'q')
     {
       clear();
       pattern = -1;
       continue;
-    } else if (pattern== ('r' - '0')) {
+    } else if (pattern== 'r') {
       clear();
       pattern = -1;
       patterns = read_config();
+      continue;
+    }
+
+    if (pattern >= np) {
+      syslog(LOG_NOTICE, "Invalid pattern number: %d\n", pattern);
+      pattern = -1;
       continue;
     }
 
@@ -570,16 +617,18 @@ int main (int argc, char *argv[])
       continue;
     }
 
-    syslog(LOG_NOTICE, "Executing pattern %d\n", pattern);
+    syslog(LOG_NOTICE, "Executing pattern %d : %s\n", pattern, patterns[pattern]);
     pattern = -1;
     clear();
-    execute(instructions,-1,0,lt,index);
+    execute(instructions,0,0,lt,index);
     syslog(LOG_NOTICE, "Finishing pattern");
     clear();
     free(instructions);
   }
 
   clear();
+  close(fd);
+  remove("/tmp/piglowfifo");
   syslog(LOG_NOTICE, "piglowd terminated.");
   closelog();
   return 0;
