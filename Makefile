@@ -27,10 +27,14 @@ clean:
 	@echo "[Clean]"
 	@rm -f $(OBJ) *~ core tags $(BINS)
 
-tags:	$(SRC)
-	@echo [ctags]
-	@ctags $(SRC)
-
 depend:
 	makedepend -Y $(SRC)
+
+install:	piglowd
+	@echo Installing piglowd into /usr/bin
+	@sudo cp piglowd /usr/bin
+	@sudo chmod 755 /usr/bin/piglowd
+	@sudo cp piglowd.conf /etc/piglowd/piglowd.conf
+	@sudo cp piglowd.init /etc/init.d/piglowd
+	@sudo chmod 755 /etc/init.d/piglowd
 
