@@ -215,7 +215,7 @@ static char** read_config(void)
   FILE *fp = fopen("/etc/piglowd/piglowd.conf", "r");
   if (fp == NULL)
   {
-    fprintf(stderr,"Error opening file.\n");
+    fprintf(stderr,"Error opening config file.\n");
     exit(EXIT_FAILURE);
   }
 
